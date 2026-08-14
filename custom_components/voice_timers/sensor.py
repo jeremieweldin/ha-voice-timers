@@ -1,19 +1,15 @@
 """Timer slot entities for Voice Timers.
 
-Each configured slot (see CONF_TIMER_SLOTS) is exposed as its own
-sensor entity, state = "idle" or "active" (mirrors core `timer` domain
-state strings so this feels familiar), with label/remaining/finishes_at
-as attributes rather than separate input_text/timer helper entities —
-this is the main win over the YAML package version: nothing to
-hand-provision, slot count is just a config-flow number.
+Each configured slot (see CONF_TIMER_SLOTS) is exposed as its own sensor
+entity, state = "idle" or "active" (mirrors core `timer` domain state
+strings so this feels familiar), with label/remaining/finishes_at as
+attributes — no separate input_text/timer helpers to hand-provision.
 
-*** SCAFFOLD STATUS ***
-Structure and entity lifecycle (add/remove on options change) are
-real. The actual countdown/ring logic is NOT implemented — see the
-TODOs below and HANDOFF.md "Timer state owner" for the intended design
-(a shared TimerManager the entities, services, and intents all read
-from, rather than each entity independently tracking its own asyncio
-timer handle).
+Entities are thin views over the shared TimerManager: they hold no timer
+state of their own, they read it from the manager and re-render whenever
+the manager dispatches a state-changed signal. Slot count is read at setup;
+changing it via the options flow reloads the entry (see __init__.py), which
+re-creates the platform with the new count.
 """
 from __future__ import annotations
 
@@ -21,19 +17,19 @@ import logging
 
 from homeassistant.components.sensor import SensorEntity
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, callback
+from homeassistant.helpers.dispatcher import async_dispatcher_connect
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .const import (
     ATTR_FINISHES_AT,
     ATTR_LABEL,
     ATTR_REMAINING,
-    CONF_TIMER_SLOTS,
-    DEFAULT_TIMER_SLOTS,
     DOMAIN,
     ENTITY_ID_FORMAT_SLOT,
-    STATE_IDLE,
+    SIGNAL_STATE_UPDATED,
 )
+from .timer_manager import TimerManager
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -44,55 +40,55 @@ async def async_setup_entry(
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     """Set up timer slot entities for this config entry."""
-    slot_count = entry.options.get(CONF_TIMER_SLOTS, DEFAULT_TIMER_SLOTS)
-
-    entities = [VoiceTimerSlot(entry, slot_index=i) for i in range(1, slot_count + 1)]
+    manager: TimerManager = hass.data[DOMAIN][entry.entry_id]["manager"]
+    entities = [
+        VoiceTimerSlot(entry, manager, slot_index=i)
+        for i in range(1, manager.slot_count + 1)
+    ]
     async_add_entities(entities)
-
-    # TODO(claude-code): handle slot_count changing via options update —
-    # add new slot entities / remove trailing ones. Currently a slot-count
-    # change only takes effect on integration reload, not live.
 
 
 class VoiceTimerSlot(SensorEntity):
-    """One named-timer slot.
-
-    TODO: this currently only models static idle state. Needs:
-      - start(label, minutes) -> schedules finish via
-        async_track_point_in_time, sets state=active, label, finishes_at
-      - cancel() -> clears state back to idle
-      - a listener that fires EVENT_TIMER_FINISHED and hands off to
-        whatever owns the repeating-announcement loop (see HANDOFF.md —
-        likely a coordinator-level concern, not per-entity, since the
-        "still ringing" repeat loop needs to run independent of any one
-        slot once a timer fires and the slot resets to idle).
-    """
+    """One named-timer slot — a read-only view over the TimerManager."""
 
     _attr_has_entity_name = True
     _attr_should_poll = False
 
-    def __init__(self, entry: ConfigEntry, slot_index: int) -> None:
+    def __init__(
+        self, entry: ConfigEntry, manager: TimerManager, slot_index: int
+    ) -> None:
         self._entry = entry
+        self._manager = manager
         self._slot_index = slot_index
         self._attr_unique_id = f"{entry.entry_id}_slot_{slot_index}"
         self._attr_name = f"Voice Timer {slot_index}"
         self.entity_id = f"sensor.{ENTITY_ID_FORMAT_SLOT.format(slot_index)}"
 
-        self._state = STATE_IDLE
-        self._label = ""
-        self._remaining_seconds: int | None = None
-        self._finishes_at: str | None = None
+    async def async_added_to_hass(self) -> None:
+        """Subscribe to manager state-change signals."""
+        self.async_on_remove(
+            async_dispatcher_connect(
+                self.hass,
+                f"{SIGNAL_STATE_UPDATED}_{self._entry.entry_id}",
+                self._handle_update,
+            )
+        )
+
+    @callback
+    def _handle_update(self) -> None:
+        self.async_write_ha_state()
 
     @property
     def native_value(self) -> str:
-        return self._state
+        return self._manager.slot_snapshot(self._slot_index)["state"]
 
     @property
     def extra_state_attributes(self) -> dict:
+        snap = self._manager.slot_snapshot(self._slot_index)
         return {
-            ATTR_LABEL: self._label,
-            ATTR_REMAINING: self._remaining_seconds,
-            ATTR_FINISHES_AT: self._finishes_at,
+            ATTR_LABEL: snap["label"],
+            ATTR_REMAINING: snap["remaining_seconds"],
+            ATTR_FINISHES_AT: snap["finishes_at"],
         }
 
     @property

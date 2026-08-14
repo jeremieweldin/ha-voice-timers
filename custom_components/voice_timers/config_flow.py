@@ -14,8 +14,11 @@ import voluptuous as vol
 from homeassistant import config_entries
 from homeassistant.core import callback
 from homeassistant.data_entry_flow import FlowResult
+from homeassistant.helpers import selector
 
 from .const import (
+    ANNOUNCE_DOMAIN,
+    CONF_ANNOUNCE_TARGETS,
     CONF_OVERRIDE_BUILTIN_TIMER,
     CONF_RING_MAX_MINUTES,
     CONF_RING_REPEAT_SECONDS,
@@ -59,14 +62,14 @@ class VoiceTimersConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         config_entry: config_entries.ConfigEntry,
     ) -> VoiceTimersOptionsFlow:
         """Get the options flow for this handler."""
-        return VoiceTimersOptionsFlow(config_entry)
+        # `config_entry` is provided to the options flow automatically by HA
+        # (self.config_entry); assigning it manually was deprecated in
+        # 2024.11 and removed since, so we don't pass or store it.
+        return VoiceTimersOptionsFlow()
 
 
 class VoiceTimersOptionsFlow(config_entries.OptionsFlow):
     """Handle options — slot count, builtin-override toggle, ring behavior."""
-
-    def __init__(self, config_entry: config_entries.ConfigEntry) -> None:
-        self.config_entry = config_entry
 
     async def async_step_init(
         self, user_input: dict[str, Any] | None = None
@@ -104,6 +107,16 @@ class VoiceTimersOptionsFlow(config_entries.OptionsFlow):
                         CONF_RING_MAX_MINUTES, DEFAULT_RING_MAX_MINUTES
                     ),
                 ): vol.All(vol.Coerce(int), vol.Range(min=1, max=60)),
+                # Which satellites to announce on. Leave empty for "all
+                # satellites" (the original package's behavior).
+                vol.Optional(
+                    CONF_ANNOUNCE_TARGETS,
+                    default=current.get(CONF_ANNOUNCE_TARGETS, []),
+                ): selector.EntitySelector(
+                    selector.EntitySelectorConfig(
+                        domain=ANNOUNCE_DOMAIN, multiple=True
+                    )
+                ),
             }
         )
 

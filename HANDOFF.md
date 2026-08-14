@@ -1,111 +1,85 @@
-# Handoff notes — Voice Timers custom integration
+# Handoff / status notes — Voice Timers custom integration
 
-Written by Claude (chat) as a scaffold, intended to be picked up by
-Claude Code for the real implementation work. This is genuinely a
-skeleton, not a working integration — every file below has been
-syntax-checked but none of it has been run against a live Home
-Assistant instance.
+**Status: implemented.** The scaffold has been fleshed out into a working
+integration. It has been syntax-checked and its two trickiest pure pieces
+(the generated `custom_sentences` YAML and the spoken-number parser) are
+unit-verified, but it has **not yet been run against a live Home Assistant
+instance** — see the live-test checklist at the bottom.
 
 ## Why this exists
 
 Started as a YAML `packages/` automation (`voice_named_timers.yaml` +
 `smart_timer_intents.yaml`) — worked, but required hand-provisioning 6
 `timer:` helpers + 6 `input_text:` label helpers + 1 `input_boolean:`
-per install, entirely unsuited to sharing with other people. This
-integration is meant to replace that: a config flow provisions
-everything, and the timer-slot count becomes an option instead of a
-block of YAML someone has to get exactly right.
+per install, unsuited to sharing. This integration replaces that: a config
+flow provisions everything, and the slot count is an option. Behavior
+(wording, stop-words, status phrasing, announce loop) was ported from the
+original YAML, not redesigned. The originals are archived in
+`original_timer_source.zip` at the repo root (reference only — safe to delete
+or gitignore; not part of the shipped integration).
 
-## What's real vs. stubbed
+## The linchpin question, resolved
 
-| File | Status |
-|---|---|
-| `manifest.json` | Real, but `version` and repo URLs are placeholders — update before any HACS submission |
-| `const.py` | Real — this is the actual contract other files depend on |
-| `config_flow.py` | Real — single-instance setup + options flow with all 4 planned options (slots, override toggle, ring interval, ring max) |
-| `translations/en.json` | Real — matches config_flow.py's step/field names exactly. **Check this stays in sync if you rename any option key.** |
-| `sensor.py` | Structural only. Entities exist and read from `entry.options` on setup, but `start()`/`cancel()`/countdown logic is **not implemented** — see TODOs inline |
-| `intent.py` | Structural only. `IntentHandler` classes exist with correct shape, but **the actual sentence-registration mechanism for a custom_component is unverified** — see the big warning at the top of that file before trusting anything else in it |
-| `services.yaml` | Real schema, but the service handlers in `__init__.py` are empty stubs |
-| `__init__.py` | Wiring is real (forwards to platform, registers services, calls intent setup, listens for options updates); the service handler bodies are stubs |
+The scaffold flagged "how does a custom_component ship sentences?" as the
+open question everything depended on. Answer:
 
-## Priority order for actually finishing this
+- HA's default conversation agent loads sentences ONLY from the bundled
+  `home_assistant_intents` package and from `<config>/custom_sentences/<lang>/`.
+  It does **not** scan `custom_components/`.
+- The programmatic `async_register_sentence()` was **removed in HA 2025.10.1**.
 
-1. **Resolve the sentence-registration question first.** Everything
-   else is downstream of this. Check
-   https://developers.home-assistant.io/docs/voice/intent-recognition/
-   and specifically look at how an existing HACS voice-related
-   integration (if any comparable one exists) ships its sentences —
-   that's more reliable than docs alone for the custom_component-
-   specific mechanism, since the dev docs mostly describe how *core*
-   integrations do this.
+So the integration **writes `config/custom_sentences/en/voice_timers.yaml`
+itself** at setup and calls `conversation.reload`; it removes the file on
+uninstall. Intent *handlers* are still registered from Python via
+`intent.async_register`. This lives in `sentences.py`. `override_builtin_timer`
+controls whether the two bare "set a timer for N minutes" patterns are written.
 
-2. **Design the shared timer-state owner** (referenced throughout as
-   "TimerManager" but not yet created as a file). The YAML package
-   version used per-entity `timer:` helpers, which meant a HA-core
-   "finished" event to hook the announcement loop off of. This
-   integration owns its own state, so it needs its own equivalent:
-   something that
-   - holds all N slots' state (replaces the `timer.voice_N` +
-     `input_text.voice_N_label` pair from the YAML version)
-   - schedules the finish callback (`async_track_point_in_time` or
-     similar)
-   - owns the repeating-announcement loop after a timer fires,
-     independent of the slot's own state (the slot should probably
-     reset to idle immediately on finish, same as the YAML version did,
-     while a separate ringing-state flag drives the repeat loop —
-     mirrors the old `input_boolean.voice_timer_ringing` split for a
-     reason: multiple finished timers ringing at once need to share one
-     stop-all behavior, not one per slot)
-   - This is the natural place for `sensor.py`'s entities to read from
-     rather than tracking state independently per-entity.
+## Architecture (as built)
 
-3. **Implement the three service handlers** in `__init__.py` against
-   the TimerManager once it exists.
+- `timer_manager.py` — `TimerManager`, the single source of truth per entry:
+  N slots, `async_start`/`async_cancel`/`async_stop_ringing`, finish scheduling
+  via `async_track_point_in_time`, one shared ring loop (`assist_satellite.
+  announce`, repeats every `ring_repeat_seconds` up to `ring_max_minutes`),
+  a dispatcher signal that sensors re-render on, and `parse_minutes()` (spoken-
+  number fallback). `get_manager(hass)` resolves the single instance.
+- `sentences.py` — generates + installs/removes the custom-sentences YAML.
+- `__init__.py` — builds the manager, wires the 3 services to it, installs
+  sentences, and reloads the whole entry on any options change.
+- `sensor.py` — thin read-only views over the manager (idle/active + attrs).
+- `intent.py` — handlers call the manager; wording ported from the YAML.
+- `config_flow.py` — single-instance setup + options (slots, override, ring
+  interval, ring max, announce targets). Uses the modern OptionsFlow pattern
+  (no manual `self.config_entry` assignment).
 
-4. **Wire the intent handlers to call the services** instead of the
-   placeholder log lines / canned speech in `intent.py`.
+## Live-test checklist (do this on the HAOS instance)
 
-5. **Implement the `override_builtin_timer` branch** in
-   `async_setup_intents()` — this is flagged inline in `intent.py`.
-   Depends entirely on how sentence registration ends up working (step
-   1), since that determines how to express "register set A of
-   sentences vs. set B" in the first place.
+1. Install via HACS custom repo, restart, add the integration. Confirm N
+   `sensor.voice_timer_*` entities + one device, and that
+   `config/custom_sentences/en/voice_timers.yaml` was written.
+2. Voice: set named + unnamed timers; "what timers are running" (check
+   pluralization); cancel by name (hit + miss); let one finish → repeating
+   announcement on satellites; "stop" silences it; confirm the ~5-min cutoff.
+3. Options: change slot count (entities add/remove after the auto-reload),
+   toggle override (bare "set a timer for N minutes" routing changes), pick a
+   specific announce target.
+4. Remove the integration → sentences file gone, phrases stop matching.
 
-6. **Live-test slot count changes via the options flow** — right now
-   `sensor.py` only reads slot count at initial setup; the `_async_
-   update_listener` in `__init__.py` currently only re-runs intent
-   setup, not entity add/remove. Decide whether slot-count changes
-   should require a reload (simpler, document it) or should add/remove
-   entities live (nicer, more code).
+### Things most likely to need a tweak after real testing
 
-7. **Reproduce the response wording behaviors** from the original YAML
-   package once the above works — status listing with correct
-   pluralization ("You have 2 timers: X with 3 minutes left, and Y with
-   1 minute left"), the specific stop-words list, etc. These were
-   already tuned once in the YAML version — TODO comments in `intent.py`
-   point at where they need to land, but the actual phrasing logic
-   should just be ported over, not redesigned.
+- **`{vt_label:label}` wildcard capture** — hassil wildcards can be greedy;
+  the original relied on the literal word "timer" as an anchor. Verify named
+  set/cancel capture the label cleanly and don't swallow extra words.
+- **Override precedence** — with override on, confirm the bare pattern actually
+  wins over core's built-in timer intent (may need testing both prefer-local
+  and agent settings).
+- **Generic stop words** ("stop", "thank you", "thanks") are claimed globally
+  and answer "Okay." even when nothing is ringing (faithful to the original).
+  Easy to scope to only-when-ringing if it hijacks other phrases.
+- **Spoken numbers** — `{vt_minutes}` is a range list (hassil should handle
+  "five" and "5"); `parse_minutes()` is a fallback. Verify word-numbers.
 
-8. **Before any HACS submission**: fill in real GitHub URLs in
-   `manifest.json`, add a LICENSE file, decide on the actual
-   `codeowners` GitHub handle, and run through HACS's quality-scale
-   checklist (they publish one — required for default-repo inclusion,
-   optional but recommended even for custom-repo-only distribution).
+## Before a public HACS submission
 
-## Design decisions already made (don't relitigate without reason)
-
-- **`override_builtin_timer` defaults to `True`.** Explicit product
-  decision from the person this was built for — most people replacing
-  the stock timer intent want full replacement; the option exists and
-  is documented for the minority who want both systems side by side.
-- **Sensor domain for timer slots**, not a custom domain and not
-  reusing core's `timer:` domain. Reusing core's `timer` domain from a
-  custom integration would fight with how that domain's config-entry
-  system already works and isn't a supported extension point as far as
-  this scaffold's author could tell — flag if you find otherwise, but
-  don't spend too long trying to route around this without solid
-  evidence it's actually being supported to do so.
-- **One device grouping all timer slots** (`device_info` in
-  `sensor.py`) rather than N standalone entities, purely for a tidier
-  entity list — no functional dependency on this, fine to change.
+Repo URLs/codeowner (`@jweldin`) and a LICENSE (MIT) are in place. Bump
+`manifest.json` `version` per release and tag it. Run HACS's quality-scale
+checklist if aiming for default-repo inclusion.

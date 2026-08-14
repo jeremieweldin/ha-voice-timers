@@ -5,9 +5,10 @@ with repeating ring announcements — a HACS-installable replacement for the
 YAML package version, so setup is a config flow instead of hand-authoring
 timer/input_text/input_boolean helpers.
 
-See HANDOFF.md at the repo root for architecture notes, what's stubbed
-vs. implemented, and the open questions flagged for whoever picks this
-scaffold up next.
+See HANDOFF.md at the repo root for background. The sentence-registration
+question flagged there is resolved: sentences are written to
+<config>/custom_sentences/en/ and loaded via conversation.reload (see
+sentences.py), since custom components can't register sentences from Python.
 """
 from __future__ import annotations
 
@@ -21,6 +22,8 @@ import voluptuous as vol
 from .const import (
     ATTR_LABEL,
     ATTR_MINUTES,
+    CONF_OVERRIDE_BUILTIN_TIMER,
+    DEFAULT_OVERRIDE_BUILTIN_TIMER,
     DOMAIN,
     PLATFORM,
     SERVICE_CANCEL,
@@ -28,6 +31,8 @@ from .const import (
     SERVICE_STOP_RINGING,
 )
 from . import intent as voice_timers_intent
+from . import sentences
+from .timer_manager import TimerManager, parse_minutes
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -42,53 +47,65 @@ SERVICE_CANCEL_SCHEMA = vol.Schema({vol.Required(ATTR_LABEL): cv.string})
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up Voice Timers from a config entry."""
+    manager = TimerManager(hass, entry)
     hass.data.setdefault(DOMAIN, {})
-    hass.data[DOMAIN][entry.entry_id] = {"entry": entry}
+    hass.data[DOMAIN][entry.entry_id] = {"entry": entry, "manager": manager}
 
     await hass.config_entries.async_forward_entry_setups(entry, [PLATFORM])
 
     # --- Services -----------------------------------------------------
-    # TODO(claude-code): wire these to the coordinator/entity manager
-    # once timer_manager.py exists (see HANDOFF.md, "Timer state owner").
     async def _handle_start(call: ServiceCall) -> None:
-        _LOGGER.debug("voice_timers.start called: %s", call.data)
-        # TODO: find a free slot, start it, fire EVENT_TIMER_STARTED
+        minutes = parse_minutes(call.data.get(ATTR_MINUTES))
+        await manager.async_start(call.data.get(ATTR_LABEL, ""), minutes)
 
     async def _handle_cancel(call: ServiceCall) -> None:
-        _LOGGER.debug("voice_timers.cancel called: %s", call.data)
-        # TODO: find slot by label, cancel it, fire EVENT_TIMER_CANCELLED
+        await manager.async_cancel(call.data[ATTR_LABEL])
 
     async def _handle_stop_ringing(call: ServiceCall) -> None:
-        _LOGGER.debug("voice_timers.stop_ringing called")
-        # TODO: flip the ringing flag off (see const.EVENT_TIMER_FINISHED
-        # consumer in the entity platform)
+        await manager.async_stop_ringing()
 
-    hass.services.async_register(DOMAIN, SERVICE_START, _handle_start, schema=SERVICE_START_SCHEMA)
-    hass.services.async_register(DOMAIN, SERVICE_CANCEL, _handle_cancel, schema=SERVICE_CANCEL_SCHEMA)
+    hass.services.async_register(
+        DOMAIN, SERVICE_START, _handle_start, schema=SERVICE_START_SCHEMA
+    )
+    hass.services.async_register(
+        DOMAIN, SERVICE_CANCEL, _handle_cancel, schema=SERVICE_CANCEL_SCHEMA
+    )
     hass.services.async_register(DOMAIN, SERVICE_STOP_RINGING, _handle_stop_ringing)
 
-    # --- Intents / sentences -------------------------------------------
-    # NOTE: sentence-registration mechanism for a Python custom_component
-    # is a flagged open question — see HANDOFF.md "Sentence registration"
-    # before trusting this call does what its name implies.
+    # --- Intents + sentences ------------------------------------------
     await voice_timers_intent.async_setup_intents(hass, entry)
+    override = entry.options.get(
+        CONF_OVERRIDE_BUILTIN_TIMER, DEFAULT_OVERRIDE_BUILTIN_TIMER
+    )
+    await sentences.async_install_sentences(hass, override)
 
-    # Re-register intents if the override toggle (or anything else that
-    # affects which sentences are claimed) changes via the options flow.
+    # Reload the whole entry when options change — slot count, override
+    # toggle, ring behavior, and announce targets are all picked up cleanly
+    # by re-running setup (re-adds entities, rewrites sentences).
     entry.async_on_unload(entry.add_update_listener(_async_update_listener))
 
     return True
 
 
 async def _async_update_listener(hass: HomeAssistant, entry: ConfigEntry) -> None:
-    """Handle options update — re-register intents in case the
-    override_builtin_timer toggle (or slot count) changed."""
-    await voice_timers_intent.async_setup_intents(hass, entry)
+    """Reload the config entry so option changes take full effect."""
+    await hass.config_entries.async_reload(entry.entry_id)
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Unload a config entry."""
     unload_ok = await hass.config_entries.async_unload_platforms(entry, [PLATFORM])
-    if unload_ok:
-        hass.data[DOMAIN].pop(entry.entry_id, None)
-    return unload_ok
+    if not unload_ok:
+        return False
+
+    data = hass.data[DOMAIN].pop(entry.entry_id, None)
+    if data and (manager := data.get("manager")):
+        await manager.async_shutdown()
+
+    # If this was the last entry, tear down the shared services + sentences.
+    if not hass.data[DOMAIN]:
+        for service in (SERVICE_START, SERVICE_CANCEL, SERVICE_STOP_RINGING):
+            hass.services.async_remove(DOMAIN, service)
+        await sentences.async_remove_sentences(hass)
+
+    return True
