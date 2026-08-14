@@ -1,0 +1,12 @@
+{
+  "domain": "voice_timers",
+  "name": "Voice Timers",
+  "codeowners": ["@jweldin"],
+  "config_flow": true,
+  "documentation": "https://github.com/jweldin/ha-voice-timers",
+  "integration_type": "service",
+  "iot_class": "calculated",
+  "issue_tracker": "https://github.com/jweldin/ha-voice-timers/issues",
+  "requirements": [],
+  "version": "0.1.0"
+}

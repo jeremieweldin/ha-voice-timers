@@ -1,0 +1,32 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Set up Voice Timers",
+        "description": "Adds named voice timers (\"set a washer timer for 50 minutes\") with repeating ring announcements. Configure timer slots and other options after setup, from this integration's Configure button."
+      }
+    },
+    "abort": {
+      "single_instance_allowed": "Voice Timers is already configured."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Voice Timers Options",
+        "data": {
+          "timer_slots": "Number of timer slots",
+          "override_builtin_timer": "Override built-in timer sentences",
+          "ring_repeat_seconds": "Ring announcement repeat interval (seconds)",
+          "ring_max_minutes": "Stop ringing automatically after (minutes)"
+        },
+        "data_description": {
+          "timer_slots": "How many named timers can run at once.",
+          "override_builtin_timer": "When on (default), unnamed timer commands like \"set a timer for 10 minutes\" route through this integration's timer pool with repeating ring announcements. When off, unnamed commands fall back to Home Assistant's built-in timer instead — turn this off if you want to keep using core's timer alongside named timers from this integration. Named timer commands (\"set a washer timer for 10 minutes\") always go through this integration either way.",
+          "ring_repeat_seconds": "How often the \"[name] timer is done\" announcement repeats while a finished timer is still ringing.",
+          "ring_max_minutes": "Safety cutoff so a forgotten timer doesn't announce forever."
+        }
+      }
+    }
+  }
+}
