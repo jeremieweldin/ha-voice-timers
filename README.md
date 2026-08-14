@@ -37,7 +37,7 @@ create by hand.
 ## Installation (HACS custom repository)
 
 1. HACS → ⋮ → **Custom repositories** → add
-   `https://github.com/jweldin/ha-voice-timers` as an **Integration**.
+   `https://github.com/jeremieweldin/ha-voice-timers` as an **Integration**.
 2. Install **Voice Timers**, then **restart** Home Assistant.
 3. Settings → Devices & Services → **Add Integration** → **Voice Timers**.
 4. Use the integration's **Configure** button to set slot count, ring behavior,

@@ -2,13 +2,13 @@
   "domain": "voice_timers",
   "name": "Voice Timers",
   "after_dependencies": ["assist_satellite"],
-  "codeowners": ["@jweldin"],
+  "codeowners": ["@jeremieweldin"],
   "config_flow": true,
   "dependencies": ["conversation"],
-  "documentation": "https://github.com/jweldin/ha-voice-timers",
+  "documentation": "https://github.com/jeremieweldin/ha-voice-timers",
   "integration_type": "service",
   "iot_class": "calculated",
-  "issue_tracker": "https://github.com/jweldin/ha-voice-timers/issues",
+  "issue_tracker": "https://github.com/jeremieweldin/ha-voice-timers/issues",
   "requirements": [],
   "version": "0.1.0"
 }

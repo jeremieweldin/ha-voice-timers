@@ -80,6 +80,6 @@ controls whether the two bare "set a timer for N minutes" patterns are written.
 
 ## Before a public HACS submission
 
-Repo URLs/codeowner (`@jweldin`) and a LICENSE (MIT) are in place. Bump
+Repo URLs/codeowner (`@jeremieweldin`) and a LICENSE (MIT) are in place. Bump
 `manifest.json` `version` per release and tag it. Run HACS's quality-scale
 checklist if aiming for default-repo inclusion.
