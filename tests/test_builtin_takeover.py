@@ -69,7 +69,9 @@ async def test_start_status_cancel(hass: HomeAssistant) -> None:
     assert hass.states.get("sensor.voice_timer_1").state == "active"
 
     status = await _say(hass, intent.INTENT_TIMER_STATUS)
-    assert status.startswith("You have 2 timers: pizza with 5 minutes left, and unnamed")
+    assert status.startswith(
+        "You have two timers: a pizza timer with 5 minutes left, and a timer with "
+    )
 
     # No name with two running is ambiguous; by name or by length works.
     assert (await _say(hass, intent.INTENT_CANCEL_TIMER)).startswith("Which timer?")
@@ -115,6 +117,39 @@ async def test_pause_resume_and_adjust(hass: HomeAssistant) -> None:
     assert not manager.is_ringing
 
 
+async def test_status_lists_every_timer_and_calls_out_paused(hass: HomeAssistant) -> None:
+    await setup_voice_timers(hass)
+    await _say(hass, intent.INTENT_START_TIMER, minutes=2, name="dinner")
+    await _say(hass, intent.INTENT_START_TIMER, minutes=3, name="bath")
+    await _say(hass, intent.INTENT_START_TIMER, minutes=10, name="pizza")
+    assert await _say(hass, intent.INTENT_PAUSE_TIMER, name="pizza") == (
+        "Paused the pizza timer."
+    )
+    for say in (
+        lambda: _say(hass, intent.INTENT_TIMER_STATUS),
+        lambda: _converse(hass, "what timers are running"),  # our own sentence
+    ):
+        assert await say() == (
+            "You have three timers: a dinner timer with 2 minutes left, a bath timer "
+            "with 3 minutes left, and a pizza timer that's paused with 10 minutes left."
+        )
+    assert await _say(hass, intent.INTENT_TIMER_STATUS, name="pizza") == (
+        "You have one pizza timer that's paused with 10 minutes left."
+    )
+    assert (await _say(hass, intent.INTENT_CANCEL_TIMER)).startswith(
+        "Which timer? You have three timers: a dinner timer"
+    )
+
+
+async def test_status_uses_an_before_vowels(hass: HomeAssistant) -> None:
+    await setup_voice_timers(hass)
+    await _say(hass, intent.INTENT_START_TIMER, minutes=5, name="oven")
+    await _say(hass, intent.INTENT_START_TIMER, minutes=5, name="egg")
+    assert (await _say(hass, intent.INTENT_TIMER_STATUS)).startswith(
+        "You have two timers: an oven timer"
+    )
+
+
 async def test_cancel_all(hass: HomeAssistant) -> None:
     await setup_voice_timers(hass)
     await _say(hass, intent.INTENT_START_TIMER, minutes=1)
@@ -146,7 +181,7 @@ async def test_core_sentences_reach_our_handlers(hass: HomeAssistant) -> None:
         "Took 1 minute off the timer."
     )
     assert (await _converse(hass, "how much time is left on the timer")).startswith(
-        "You have one timer: unnamed with"
+        "You have one timer with"
     )
     assert await _converse(hass, "cancel all timers") == "Cancelled your timer."
 

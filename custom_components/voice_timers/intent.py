@@ -125,17 +125,9 @@ class TimerStatusIntent(intent.IntentHandler):
     async def async_handle(self, intent_obj: intent.Intent) -> intent.IntentResponse:
         response = intent_obj.create_response()
         manager = get_manager(intent_obj.hass)
-        parts = manager.status_parts() if manager else []
-
-        if not parts:
-            response.async_set_speech("You have no timers running.")
-        elif len(parts) == 1:
-            response.async_set_speech(f"You have one timer: {parts[0]}.")
-        else:
-            response.async_set_speech(
-                f"You have {len(parts)} timers: "
-                f"{', '.join(parts[:-1])}, and {parts[-1]}."
-            )
+        response.async_set_speech(
+            manager.status_sentence() if manager else "You have no timers running."
+        )
         return response
 
 

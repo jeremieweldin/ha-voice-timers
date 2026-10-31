@@ -109,9 +109,7 @@ class _TakeoverHandler(intent.IntentHandler):
         if reason == "not_found":
             what = f"a {name} timer" if name else "that timer"
             return None, f"I couldn't find {what}."
-        return None, "Which timer? You have " + ", ".join(
-            manager.status_parts()
-        ) + "."
+        return None, f"Which timer? {manager.status_sentence()}"
 
 
 class StartTimerTakeover(_TakeoverHandler):
@@ -223,14 +221,8 @@ class TimerStatusTakeover(_TakeoverHandler):
             slot, problem = self._resolve(manager, slots)
             if slot is None:
                 return problem
-            parts = manager.status_parts([slot])
-        else:
-            parts = manager.status_parts()
-        if not parts:
-            return "You have no timers running."
-        if len(parts) == 1:
-            return f"You have one timer: {parts[0]}."
-        return f"You have {len(parts)} timers: {', '.join(parts[:-1])}, and {parts[-1]}."
+            return manager.status_sentence([slot])
+        return manager.status_sentence()
 
 
 _TAKEOVER_CLASSES = (

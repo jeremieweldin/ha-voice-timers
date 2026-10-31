@@ -37,7 +37,7 @@ create by hand.
 | "set a washer timer for 50 minutes" | Starts a named timer |
 | "set a 10 minute timer for pizza" | Same, either word order |
 | "set a timer for 5 minutes" / "set a 30 second timer" | Unnamed timer (when override is on) |
-| "what timers are running" / "how much time is left" | Lists timers with time left |
+| "what timers are running" / "how much time is left on the timer" | Lists every timer with time left, calling out paused ones |
 | "cancel the washer timer" / "cancel the 5 minute timer" | Cancels one timer |
 | "cancel all timers" | Cancels every timer |
 | "pause the timer" / "resume the timer" | Pauses or resumes a timer |

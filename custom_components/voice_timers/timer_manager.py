@@ -109,6 +109,9 @@ def parse_minutes(value: object) -> float | None:
     return total if matched else None
 
 
+_NUMBER_WORDS = {value: word for word, value in _ONES.items() if value >= 2}
+
+
 def format_duration(total_seconds: float) -> str:
     """Speakable duration, e.g. '1 hour and 30 minutes', '45 seconds'."""
     total = max(0, int(round(total_seconds)))
@@ -221,7 +224,8 @@ class TimerManager:
         return {"state": STATE_IDLE, "label": "", "remaining_seconds": None, "finishes_at": None}
 
     def status_parts(self, slots: list[_Slot] | None = None) -> list[str]:
-        """Human phrases for each timer in use, e.g. 'washer with 3 minutes left'.
+        """Human phrases for each timer in use, e.g. 'washer timer with 3
+        minutes left' or 'pizza timer that's paused with 30 seconds left'.
 
         Defaults to every in-use slot; pass `slots` to describe just those.
         """
@@ -236,10 +240,23 @@ class TimerManager:
             else:
                 mins = math.ceil(remaining / 60)  # ceil to whole minutes
                 left = f"{mins} minute{'s' if mins != 1 else ''}"
-            name = slot.label if slot.label else "unnamed"
-            paused = ", paused," if slot.state == STATE_PAUSED else ""
+            name = f"{slot.label} timer" if slot.label else "timer"
+            paused = " that's paused" if slot.state == STATE_PAUSED else ""
             parts.append(f"{name}{paused} with {left} left")
         return parts
+
+    def status_sentence(self, slots: list[_Slot] | None = None) -> str:
+        """Spoken summary, e.g. 'You have three timers: a dinner timer with 2
+        minutes left, a bath timer with 3 minutes left, and a pizza timer
+        that's paused with 3 seconds left.'"""
+        parts = self.status_parts(slots)
+        if not parts:
+            return "You have no timers running."
+        if len(parts) == 1:
+            return f"You have one {parts[0]}."
+        listed = [f"{'an' if part[0] in 'aeiou' else 'a'} {part}" for part in parts]
+        count = _NUMBER_WORDS.get(len(parts), str(len(parts)))
+        return f"You have {count} timers: {', '.join(listed[:-1])}, and {listed[-1]}."
 
     def in_use_slots(self) -> list[_Slot]:
         return [s for s in self._slots if s.in_use]
