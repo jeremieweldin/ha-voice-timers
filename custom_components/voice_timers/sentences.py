@@ -51,8 +51,9 @@ _HEADER = (
 
 # Named-timer patterns (label + minutes). Ported from voice_named_timers.yaml.
 _SET_NAMED = [
-    f"set a {{{LIST_LABEL}:label}} timer for {{{LIST_MINUTES}:minutes}} minute[s]",
-    f"start a {{{LIST_LABEL}:label}} timer for {{{LIST_MINUTES}:minutes}} minute[s]",
+    # (a|an): "set an oven timer" must keep its name too.
+    f"set (a|an) {{{LIST_LABEL}:label}} timer for {{{LIST_MINUTES}:minutes}} minute[s]",
+    f"start (a|an) {{{LIST_LABEL}:label}} timer for {{{LIST_MINUTES}:minutes}} minute[s]",
     f"set a {{{LIST_MINUTES}:minutes}} minute timer for {{{LIST_LABEL}:label}}",
     f"start a {{{LIST_MINUTES}:minutes}} minute timer for {{{LIST_LABEL}:label}}",
 ]

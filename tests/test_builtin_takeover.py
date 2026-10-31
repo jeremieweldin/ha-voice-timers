@@ -141,6 +141,13 @@ async def test_status_lists_every_timer_and_calls_out_paused(hass: HomeAssistant
     )
 
 
+async def test_set_an_named_timer_keeps_its_name(hass: HomeAssistant) -> None:
+    await setup_voice_timers(hass)
+    assert await _converse(hass, "set an oven timer for 1 minute") == (
+        "Oven timer set for 1 minute."
+    )
+
+
 async def test_status_uses_an_before_vowels(hass: HomeAssistant) -> None:
     await setup_voice_timers(hass)
     await _say(hass, intent.INTENT_START_TIMER, minutes=5, name="oven")
