@@ -1,10 +1,40 @@
 # Handoff / status notes — Voice Timers custom integration
 
-**Status: implemented.** The scaffold has been fleshed out into a working
-integration. It has been syntax-checked and its two trickiest pure pieces
-(the generated `custom_sentences` YAML and the spoken-number parser) are
-unit-verified, but it has **not yet been run against a live Home Assistant
-instance** — see the live-test checklist at the bottom.
+**Status: implemented, tested against HA core, not yet on the live box.**
+v0.2.0 added the built-in timer takeover (below) and a pytest suite that
+runs against real Home Assistant core (2026.2) including the default
+conversation agent — see `tests/`. It has **not yet been run on the live
+HAOS instance** — see the live-test checklist at the bottom.
+
+## v0.2.0: built-in timer takeover
+
+Goal: the satellites' built-in timers must never be used. Claiming our own
+sentences wasn't enough — core's intents package has far more timer phrasing
+("pause the timer", "add 5 minutes", "how much time is left"), which would
+still reach core's handlers. So with `override_builtin_timer` on,
+`builtin_takeover.py` replaces core's handlers for all eight timer intents
+(`HassStartTimer`, `HassCancelTimer`, `HassCancelAllTimers`,
+`HassIncreaseTimer`, `HassDecreaseTimer`, `HassPauseTimer`,
+`HassUnpauseTimer`, `HassTimerStatus`) with ones that drive `TimerManager`,
+and restores core's on unload / option off. Notes:
+
+- Works because the default agent only renders core's canned response when
+  the handler set no speech — ours always sets speech.
+- Core's handlers are registered by the `intent` component, which
+  `manifest.json` now lists as a dependency, so ours always register after.
+- Core's `slot_schema`/`description` are borrowed, so LLM agents' timer tools
+  keep working and also land in our pool.
+- `HassStartTimer` with a `conversation_command` slot (a delayed command,
+  "turn off the lights in 10 minutes") is passed to core's original handler.
+- The manager gained pause/resume, add/remove time (removing past zero
+  finishes the timer, like core), cancel-all, and lookup by name or original
+  length. "cancel the timer" while one is ringing just silences it.
+
+Also fixed in v0.2.0 (both found by the new tests, both would have hit the
+live box): HA auto-calls `intent.py`'s `async_setup_intents(hass)` as an
+intent platform with one argument, which crashed on the old two-argument
+signature; and the "already registered" flag was a module global instead of
+per-hass.
 
 ## Why this exists
 
@@ -63,6 +93,13 @@ controls whether the two bare "set a timer for N minutes" patterns are written.
    toggle override (bare "set a timer for N minutes" routing changes), pick a
    specific announce target.
 4. Remove the integration → sentences file gone, phrases stop matching.
+5. Takeover (on a real satellite, e.g. Voice PE): "set a timer for 2
+   minutes" must NOT show the satellite's own LED/countdown timer; "pause the
+   timer", "add a minute to the timer", "how much time is left" answer from
+   our pool; the HA log shows "took over built-in timer intents" once.
+6. Before step 3's override toggle, remove the old YAML packages
+   (`voice_named_timers.yaml`, `smart_timer_intents.yaml`): their sentence
+   triggers are checked before intents and would shadow these.
 
 ### Things most likely to need a tweak after real testing
 

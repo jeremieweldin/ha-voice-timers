@@ -1,0 +1,4 @@
+pytest-homeassistant-custom-component
+# Requirements of HA's conversation component (match the HA version above).
+hassil
+home-assistant-intents

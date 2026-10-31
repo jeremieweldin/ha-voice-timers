@@ -59,6 +59,7 @@ SIGNAL_STATE_UPDATED = f"{DOMAIN}_state_updated"
 # --- States (mirrors core `timer` domain state strings for familiarity) ---
 STATE_IDLE = "idle"
 STATE_ACTIVE = "active"
+STATE_PAUSED = "paused"
 
 # --- Events ---
 EVENT_TIMER_FINISHED = f"{DOMAIN}_finished"

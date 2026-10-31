@@ -4,11 +4,11 @@
   "after_dependencies": ["assist_satellite"],
   "codeowners": ["@jeremieweldin"],
   "config_flow": true,
-  "dependencies": ["conversation"],
+  "dependencies": ["conversation", "intent"],
   "documentation": "https://github.com/jeremieweldin/ha-voice-timers",
   "integration_type": "service",
   "iot_class": "calculated",
   "issue_tracker": "https://github.com/jeremieweldin/ha-voice-timers/issues",
   "requirements": [],
-  "version": "0.1.0"
+  "version": "0.2.0"
 }

@@ -30,6 +30,7 @@ from .const import (
     SERVICE_START,
     SERVICE_STOP_RINGING,
 )
+from . import builtin_takeover
 from . import intent as voice_timers_intent
 from . import sentences
 from .timer_manager import TimerManager, parse_minutes
@@ -78,6 +79,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         CONF_OVERRIDE_BUILTIN_TIMER, DEFAULT_OVERRIDE_BUILTIN_TIMER
     )
     await sentences.async_install_sentences(hass, override)
+    # Override also swaps out core's timer intent handlers, so no timer
+    # phrase (or LLM tool call) can start a timer on a satellite itself.
+    if override:
+        builtin_takeover.async_install(hass)
+    else:
+        builtin_takeover.async_restore(hass)
 
     # Reload the whole entry when options change — slot count, override
     # toggle, ring behavior, and announce targets are all picked up cleanly
@@ -102,10 +109,12 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     if data and (manager := data.get("manager")):
         await manager.async_shutdown()
 
-    # If this was the last entry, tear down the shared services + sentences.
+    # If this was the last entry, tear down the shared services + sentences
+    # and give core back its timer intents.
     if not hass.data[DOMAIN]:
         for service in (SERVICE_START, SERVICE_CANCEL, SERVICE_STOP_RINGING):
             hass.services.async_remove(DOMAIN, service)
         await sentences.async_remove_sentences(hass)
+        builtin_takeover.async_restore(hass)
 
     return True

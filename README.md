@@ -17,11 +17,18 @@ create by hand.
 - Repeating *"[name] timer is done"* announcement via `assist_satellite`,
   until acknowledged or a configurable timeout
 - One **"stop"** silences every ringing timer at once
-- **Override built-in timer sentences** (default: on) — when on, unnamed
-  commands (*"set a timer for 10 minutes"*) route through this integration's
-  timer pool. Turn it off to let Home Assistant's built-in timer keep handling
-  unnamed timers alongside named ones from this integration.
+- **Replace Home Assistant's built-in timers** (default: on) — every timer
+  command goes through this integration's pool, so the built-in satellite
+  timers are never used. This doesn't just claim a few sentences: it takes
+  over all eight of Home Assistant's built-in timer intents (start, cancel,
+  cancel all, add time, remove time, pause, resume, status), so any phrasing
+  Home Assistant understands — or an LLM agent's timer tool call — lands
+  here. Home Assistant's handlers are put back when the option is turned off
+  or the integration is removed. Delayed commands (*"turn off the lights in
+  10 minutes"*) are still handed to Home Assistant.
+- Pause, resume, and add or remove time on any timer
 - One tidy device grouping all slots as `sensor.voice_timer_N` entities
+  (`idle`, `active`, or `paused`)
 
 ## What you can say
 
@@ -29,10 +36,18 @@ create by hand.
 |---|---|
 | "set a washer timer for 50 minutes" | Starts a named timer |
 | "set a 10 minute timer for pizza" | Same, either word order |
-| "set a timer for 5 minutes" | Unnamed timer (when override is on) |
-| "what timers are running" | Lists active timers with time left |
-| "cancel the washer timer" | Cancels a named timer |
-| "stop" / "okay stop" / "thank you" | Silences a ringing timer |
+| "set a timer for 5 minutes" / "set a 30 second timer" | Unnamed timer (when override is on) |
+| "what timers are running" / "how much time is left" | Lists timers with time left |
+| "cancel the washer timer" / "cancel the 5 minute timer" | Cancels one timer |
+| "cancel all timers" | Cancels every timer |
+| "pause the timer" / "resume the timer" | Pauses or resumes a timer |
+| "add 5 minutes to the washer timer" / "take 2 minutes off the timer" | Adjusts a timer |
+| "stop" / "okay stop" / "thank you" / "cancel the timer" (while ringing) | Silences a ringing timer |
+
+The rows beyond the first three and the original "stop" phrases use Home
+Assistant's own built-in timer sentences, so they need the override option
+on. With more than one timer running, say which one (by name or length) or
+you'll be asked.
 
 ## Installation (HACS custom repository)
 
@@ -72,6 +87,16 @@ remove those package files and their `timer:` / `input_text:` /
 `input_boolean:` helper declarations. This integration recreates that state
 internally, so the old helpers become redundant orphaned entities. Also remove
 any old `custom_sentences` entries for the same phrases to avoid double matches.
+
+## Development
+
+Tests run against a real Home Assistant core via
+`pytest-homeassistant-custom-component` (Linux/WSL, Python 3.13):
+
+```bash
+pip install -r requirements_test.txt
+pytest tests
+```
 
 ## License
 

@@ -16,14 +16,14 @@
         "title": "Voice Timers Options",
         "data": {
           "timer_slots": "Number of timer slots",
-          "override_builtin_timer": "Override built-in timer sentences",
+          "override_builtin_timer": "Replace Home Assistant's built-in timers",
           "ring_repeat_seconds": "Ring announcement repeat interval (seconds)",
           "ring_max_minutes": "Stop ringing automatically after (minutes)",
           "announce_targets": "Announce on these satellites"
         },
         "data_description": {
           "timer_slots": "How many named timers can run at once.",
-          "override_builtin_timer": "When on (default), unnamed timer commands like \"set a timer for 10 minutes\" route through this integration's timer pool with repeating ring announcements. When off, unnamed commands fall back to Home Assistant's built-in timer instead — turn this off if you want to keep using core's timer alongside named timers from this integration. Named timer commands (\"set a washer timer for 10 minutes\") always go through this integration either way.",
+          "override_builtin_timer": "When on (default), every timer command goes through this integration — unnamed ones like \"set a timer for 10 minutes\", plus pause, resume, add/remove time, cancel and status — so Home Assistant's built-in satellite timers are never used. Delayed commands (\"turn off the lights in 10 minutes\") still use Home Assistant's built-in handling. When off, Home Assistant's built-in timers work as normal alongside named timers from this integration. Named timer commands (\"set a washer timer for 10 minutes\") always go through this integration either way.",
           "ring_repeat_seconds": "How often the \"[name] timer is done\" announcement repeats while a finished timer is still ringing.",
           "ring_max_minutes": "Safety cutoff so a forgotten timer doesn't announce forever.",
           "announce_targets": "Which Assist satellites announce finished timers. Leave empty to announce on every satellite."

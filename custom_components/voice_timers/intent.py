@@ -8,6 +8,7 @@ and speak the responses ported from the original YAML package.
 from __future__ import annotations
 
 import logging
+import re
 
 import voluptuous as vol
 
@@ -25,6 +26,22 @@ from .const import (
 from .timer_manager import get_manager, parse_minutes
 
 _LOGGER = logging.getLogger(__name__)
+
+# "cancel the 30 second timer" matches "cancel [the] {label} timer" with the
+# label "30 second" — the wildcard can't tell a name from a length.
+_DURATION_LABEL = re.compile(r"^(.+?)\s+(second|minute|hour)s?$")
+_UNIT_SECONDS = {"second": 1, "minute": 60, "hour": 3600}
+
+
+def _label_as_seconds(label: str) -> int | None:
+    """'30 second' / 'five minute' -> seconds, or None if it isn't a length."""
+    match = _DURATION_LABEL.match(label)
+    if match is None:
+        return None
+    amount = parse_minutes(match.group(1))
+    if not amount:
+        return None
+    return int(round(amount * _UNIT_SECONDS[match.group(2)]))
 
 
 def _fmt_minutes(minutes: float) -> str:
@@ -89,6 +106,12 @@ class CancelNamedTimerIntent(intent.IntentHandler):
 
         if await manager.async_cancel(label):
             response.async_set_speech(f"Cancelled the {label} timer.")
+        elif (seconds := _label_as_seconds(label)) and (
+            slot := manager.find(duration_seconds=seconds)[0]
+        ):
+            what = f"the {slot.label} timer" if slot.label else "the timer"
+            manager.cancel_slot(slot)
+            response.async_set_speech(f"Cancelled {what}.")
         else:
             response.async_set_speech(f"I couldn't find a {label} timer running.")
         return response
@@ -138,20 +161,25 @@ _HANDLER_CLASSES = (
     StopRingingIntent,
 )
 
-_REGISTERED = False
+# Per-hass flag (not a module global, which would outlive a hass instance).
+DATA_REGISTERED = "voice_timers_intents_registered"
 
 
-async def async_setup_intents(hass: HomeAssistant, entry: ConfigEntry) -> None:
+async def async_setup_intents(
+    hass: HomeAssistant, entry: ConfigEntry | None = None
+) -> None:
     """Register intent handlers (idempotent — re-registering overwrites).
+
+    Home Assistant also calls this on its own with just `hass`, because a
+    module named intent.py is an intent platform — hence the optional entry.
 
     Which *sentences* map to these intents (including whether the bare
     "set a timer for N minutes" pattern is claimed) is handled in
     sentences.py based on the override_builtin_timer option; the handlers
     themselves are the same regardless.
     """
-    global _REGISTERED
-    if _REGISTERED:
+    if hass.data.get(DATA_REGISTERED):
         return
     for handler_cls in _HANDLER_CLASSES:
         intent.async_register(hass, handler_cls())
-    _REGISTERED = True
+    hass.data[DATA_REGISTERED] = True

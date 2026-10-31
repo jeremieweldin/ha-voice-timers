@@ -47,6 +47,7 @@ from .const import (
     SIGNAL_STATE_UPDATED,
     STATE_ACTIVE,
     STATE_IDLE,
+    STATE_PAUSED,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -108,6 +109,23 @@ def parse_minutes(value: object) -> float | None:
     return total if matched else None
 
 
+def format_duration(total_seconds: float) -> str:
+    """Speakable duration, e.g. '1 hour and 30 minutes', '45 seconds'."""
+    total = max(0, int(round(total_seconds)))
+    hours, rest = divmod(total, 3600)
+    minutes, seconds = divmod(rest, 60)
+    parts = [
+        f"{value} {unit}{'s' if value != 1 else ''}"
+        for value, unit in ((hours, "hour"), (minutes, "minute"), (seconds, "second"))
+        if value
+    ]
+    if not parts:
+        return "0 seconds"
+    if len(parts) == 1:
+        return parts[0]
+    return f"{', '.join(parts[:-1])} and {parts[-1]}"
+
+
 @dataclass
 class _Slot:
     """One named-timer slot."""
@@ -116,24 +134,40 @@ class _Slot:
     state: str = STATE_IDLE
     label: str = ""
     finishes_at: datetime | None = None
+    # Original requested length, so "cancel the 5 minute timer" can match.
+    duration_seconds: int = 0
+    # Time left when paused (finishes_at is None while paused).
+    paused_remaining: float | None = None
     _unsub: CALLBACK_TYPE | None = field(default=None, repr=False)
 
     @property
     def is_active(self) -> bool:
         return self.state == STATE_ACTIVE
 
+    @property
+    def in_use(self) -> bool:
+        """Active or paused — either way the slot isn't free."""
+        return self.state in (STATE_ACTIVE, STATE_PAUSED)
+
     def remaining_seconds(self, now: datetime) -> int | None:
+        if self.state == STATE_PAUSED and self.paused_remaining is not None:
+            return max(0, int(self.paused_remaining))
         if not self.is_active or self.finishes_at is None:
             return None
         return max(0, int((self.finishes_at - now).total_seconds()))
 
-    def clear(self) -> None:
+    def unschedule(self) -> None:
         if self._unsub is not None:
             self._unsub()
             self._unsub = None
+
+    def clear(self) -> None:
+        self.unschedule()
         self.state = STATE_IDLE
         self.label = ""
         self.finishes_at = None
+        self.duration_seconds = 0
+        self.paused_remaining = None
 
 
 @dataclass
@@ -186,18 +220,56 @@ class TimerManager:
                 }
         return {"state": STATE_IDLE, "label": "", "remaining_seconds": None, "finishes_at": None}
 
-    def status_parts(self) -> list[str]:
-        """Human phrases for each active timer, e.g. 'washer with 3 minutes left'."""
+    def status_parts(self, slots: list[_Slot] | None = None) -> list[str]:
+        """Human phrases for each timer in use, e.g. 'washer with 3 minutes left'.
+
+        Defaults to every in-use slot; pass `slots` to describe just those.
+        """
         now = dt_util.utcnow()
         parts: list[str] = []
-        for slot in self._slots:
-            if not slot.is_active or slot.finishes_at is None:
+        for slot in self.in_use_slots() if slots is None else slots:
+            remaining = slot.remaining_seconds(now)
+            if remaining is None:
                 continue
-            remaining = (slot.finishes_at - now).total_seconds()
-            mins = max(0, math.ceil(remaining / 60))  # ceil to whole minutes
+            if remaining < 60:
+                left = format_duration(remaining)
+            else:
+                mins = math.ceil(remaining / 60)  # ceil to whole minutes
+                left = f"{mins} minute{'s' if mins != 1 else ''}"
             name = slot.label if slot.label else "unnamed"
-            parts.append(f"{name} with {mins} minute{'s' if mins != 1 else ''} left")
+            paused = ", paused," if slot.state == STATE_PAUSED else ""
+            parts.append(f"{name}{paused} with {left} left")
         return parts
+
+    def in_use_slots(self) -> list[_Slot]:
+        return [s for s in self._slots if s.in_use]
+
+    def find(
+        self,
+        label: str | None = None,
+        duration_seconds: int | None = None,
+        states: tuple[str, ...] = (STATE_ACTIVE, STATE_PAUSED),
+    ) -> tuple[_Slot | None, str | None]:
+        """Resolve which timer a command means.
+
+        Matches on label (case-insensitive) and/or original duration. With
+        neither given, it's only unambiguous when exactly one timer is in a
+        matching state. Returns (slot, None) or (None, reason) where reason is
+        "none" (nothing running), "not_found", or "ambiguous".
+        """
+        candidates = [s for s in self._slots if s.state in states]
+        if not candidates:
+            return None, "none"
+        if label:
+            target = label.strip().lower()
+            candidates = [s for s in candidates if s.label.lower() == target]
+        if duration_seconds:
+            candidates = [s for s in candidates if s.duration_seconds == duration_seconds]
+        if not candidates:
+            return None, "not_found"
+        if len(candidates) > 1:
+            return None, "ambiguous"
+        return candidates[0], None
 
     # --- Commands ------------------------------------------------------
 
@@ -207,16 +279,14 @@ class TimerManager:
         if minutes is None or minutes <= 0:
             return StartResult(ok=False, reason="bad_duration")
 
-        slot = next((s for s in self._slots if not s.is_active), None)
+        slot = next((s for s in self._slots if not s.in_use), None)
         if slot is None:
             return StartResult(ok=False, reason="no_slot")
 
         slot.state = STATE_ACTIVE
         slot.label = label
-        slot.finishes_at = dt_util.utcnow() + timedelta(minutes=minutes)
-        slot._unsub = async_track_point_in_time(
-            self.hass, self._make_finish_cb(slot), slot.finishes_at
-        )
+        slot.duration_seconds = int(round(minutes * 60))
+        self._schedule(slot, dt_util.utcnow() + timedelta(minutes=minutes))
 
         self.hass.bus.async_fire(
             EVENT_TIMER_STARTED,
@@ -226,25 +296,81 @@ class TimerManager:
         return StartResult(ok=True, label=label, minutes=minutes)
 
     async def async_cancel(self, label: str) -> bool:
-        """Cancel the active timer matching `label` (case-insensitive).
+        """Cancel the timer matching `label` (case-insensitive).
 
         Returns True if one was found and cancelled.
         """
         target = (label or "").strip().lower()
         slot = next(
-            (s for s in self._slots if s.is_active and s.label.lower() == target),
+            (s for s in self._slots if s.in_use and s.label.lower() == target),
             None,
         )
         if slot is None:
             return False
+        self.cancel_slot(slot)
+        return True
 
-        number = slot.number
+    @callback
+    def cancel_slot(self, slot: _Slot) -> None:
+        """Cancel a specific in-use slot."""
+        number, label = slot.number, slot.label
         slot.clear()
         self.hass.bus.async_fire(
             EVENT_TIMER_CANCELLED, {"slot": number, "label": label}
         )
         self._notify()
-        return True
+
+    @callback
+    def cancel_all(self) -> int:
+        """Cancel every in-use timer; returns how many were cancelled."""
+        slots = self.in_use_slots()
+        for slot in slots:
+            self.cancel_slot(slot)
+        return len(slots)
+
+    @callback
+    def adjust(self, slot: _Slot, delta_seconds: float) -> None:
+        """Add (positive) or remove (negative) time from a timer.
+
+        Removing more time than is left finishes it right away, like core.
+        """
+        now = dt_util.utcnow()
+        remaining = (slot.remaining_seconds(now) or 0) + delta_seconds
+        slot.duration_seconds = max(0, slot.duration_seconds + int(delta_seconds))
+        if remaining <= 0:
+            slot.unschedule()
+            self._on_finished(slot)
+            return
+        if slot.state == STATE_PAUSED:
+            slot.paused_remaining = remaining
+        else:
+            self._schedule(slot, now + timedelta(seconds=remaining))
+        self._notify()
+
+    @callback
+    def pause(self, slot: _Slot) -> None:
+        """Freeze a running timer's remaining time."""
+        slot.paused_remaining = slot.remaining_seconds(dt_util.utcnow()) or 0
+        slot.unschedule()
+        slot.finishes_at = None
+        slot.state = STATE_PAUSED
+        self._notify()
+
+    @callback
+    def resume(self, slot: _Slot) -> None:
+        """Restart a paused timer from where it stopped."""
+        remaining = slot.paused_remaining or 0
+        slot.paused_remaining = None
+        slot.state = STATE_ACTIVE
+        self._schedule(slot, dt_util.utcnow() + timedelta(seconds=remaining))
+        self._notify()
+
+    def _schedule(self, slot: _Slot, finishes_at: datetime) -> None:
+        slot.unschedule()
+        slot.finishes_at = finishes_at
+        slot._unsub = async_track_point_in_time(
+            self.hass, self._make_finish_cb(slot), finishes_at
+        )
 
     async def async_stop_ringing(self) -> None:
         """Silence any/all currently-ringing timers."""
@@ -264,7 +390,7 @@ class TimerManager:
 
     @callback
     def _on_finished(self, slot: _Slot) -> None:
-        if not slot.is_active:
+        if not slot.in_use:
             return  # stale (already cancelled/reset)
 
         label = slot.label
